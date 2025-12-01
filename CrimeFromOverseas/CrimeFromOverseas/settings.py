@@ -10,7 +10,28 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# .env 파일 로드
+load_dotenv(dotenv_path=BASE_DIR / ".env")
+
+# API Keys
+API_KEY = os.getenv("API_KEY")
+
+SCAM_BASE_URL = os.getenv("SCAM_BASE_URL")
+SCAM_ENDPOINT = os.getenv("SCAM_ENDPOINT")
+
+VOICE_BASE_URL = os.getenv("VOICE_BASE_URL")
+VOICE_ENDPOINT = os.getenv("VOICE_ENDPOINT")
+
+TRAVEL_BASE_URL = os.getenv("TRAVEL_BASE_URL")
+TRAVEL_ENDPOINT = os.getenv("TRAVEL_ENDPOINT")
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
