@@ -138,17 +138,26 @@ def sync_voice_phishing():
 
 
 # =========================
-# 3. 출입국 관광 통계
+# 3. 출입국 관광 통계 (국민 해외관광객 위주)
 # =========================
-def fetch_travel_stats(year_month, nat_cd, ed_cd="E"):
+import xmltodict  # 맨 위 import에 추가 필요
+
+def fetch_travel_stats(year_month, nat_cd, ed_cd="D"):
     """
-    관광 출입국 통계 기능(1번 API)
-    YM: 201201 형태
-    NAT_CD: 112 (국가코드)
-    ED_CD: E(출국), D(입국)
+    관광 출입국 통계 (EdrcntTourismStatsService)
+
+    YM     : '201201' 형태의 문자열 (YYYYMM)
+    NAT_CD : 국가 코드 (예: '112')
+    ED_CD  : 'D' = 국민 해외관광객(출국), 'E' = 방한외래관광객(입국)
+
+    이 함수는 XML 응답을 dict 형태로 파싱해서 반환한다.
     """
 
-    url = f"{settings.TRAVEL_BASE_URL}{settings.TRAVEL_ENDPOINT}"
+    # settings.py 에서 이렇게 읽고 있다고 가정:
+    # TRAVEL_BASE_URL=https://openapi.tour.go.kr/openapi/service
+    # TRAVEL_SERVICE=EdrcntTourismStatsService
+    # TRAVEL_ENDPOINT=getEdrcntTourismStatsList
+    url = f"{settings.TRAVEL_BASE_URL}/{settings.TRAVEL_SERVICE}/{settings.TRAVEL_ENDPOINT}"
 
     params = {
         "serviceKey": settings.API_KEY,
@@ -160,28 +169,50 @@ def fetch_travel_stats(year_month, nat_cd, ed_cd="E"):
     res = requests.get(url, params=params)
     res.raise_for_status()
 
-    # 이 API는 XML 기반인데, 포털 세팅에 따라 JSON이 올 수도 있음.
-    # 우선 json() 시도, 안 되면 text 그대로 반환해서 나중에 따로 처리해도 됨.
-    try:
-        return res.json()
-    except ValueError:
-        # XML 그대로 돌려주기 (지금은 안 쓰면 됨)
-        return {"raw_xml": res.text}
+    # 출입국 통계는 공식적으로 XML만 제공 → xmltodict로 파싱
+    data = xmltodict.parse(res.text)
+    return data
 
 
-def sync_travel_stats(year, month, nat_cd="112", ed_cd="E"):
-    """출국자 통계를 DB에 저장"""
+def sync_travel_stats(year, month, nat_cd="112", ed_cd="D"):
+    """
+    출국자(국민 해외관광객) 통계를 DB에 저장
+
+    year  : 2020
+    month : 1 ~ 12
+    nat_cd: 국가 코드 (112 등)
+    ed_cd : 기본 'D' (국민 해외관광객)
+    """
 
     ym = f"{year}{month:02d}"
     data = fetch_travel_stats(ym, nat_cd, ed_cd)
 
-    # JSON인 경우만 처리 (XML이면 나중에 xmltodict 같은 걸로 파싱)
+    # XML → dict 구조 예시:
+    # data["response"]["body"]["items"]["item"]
     try:
-        item = data["response"]["body"]["items"]["item"]
-    except (KeyError, TypeError):
-        return  # 데이터 없음 or 아직 XML 처리 안 함
+        item = (
+            data
+            .get("response", {})
+            .get("body", {})
+            .get("items", {})
+            .get("item")
+        )
+    except AttributeError:
+        # 구조가 이상하면 그냥 종료
+        return
 
-    departures_raw = item.get("num")
+    if item is None:
+        # 조회 결과가 없으면 종료
+        return
+
+    # item 이 리스트일 수도, dict일 수도 있어서 방어
+    if isinstance(item, list):
+        # NAT_CD 한 개만 조회했는데 리스트면, 우선 첫 번째만 사용
+        item = item[0]
+
+    # 필드 이름은 실제 응답 확인해서 한 번 맞춰봐야 함
+    # 보통 num / natCd / ym / edCd 이런 식으로 옴
+    departures_raw = item.get("num") or item.get("NUM")  # 혹시 대소문자 다를 경우 대비
 
     try:
         departures = int(departures_raw)

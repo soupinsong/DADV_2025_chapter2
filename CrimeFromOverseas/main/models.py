@@ -1,18 +1,51 @@
 from django.db import models
 
+
 class TravelStat(models.Model):
-    """월별 해외 출국자 수 (국가별 or 전체)"""
+    """
+    월별 해외 출국자 수 (국가별)
+    - year, month : 기준 연월
+    - country     : 국가 코드(NAT_CD, 예: '112')
+    - country_name: 국가명(한국어, 예: '일본') - 선택
+    - ed_cd       : 출입국 구분 ('D' = 국민 해외관광객, 'E' = 방한외래관광객)
+    - departures  : 출국자 수 (num)
+    - ratio       : 전년 동월 대비 증감률(%) (옵션)
+    """
+
     year = models.IntegerField()
     month = models.IntegerField()
-    country = models.CharField(max_length=255, default="TOTAL")  # 국가 코드 또는 전체
 
-    departures = models.IntegerField()  # 출국자 수
+    # 기존 country 필드를 그대로 쓰되, 의미를 명확히: 국가 코드(NAT_CD)
+    country = models.CharField(max_length=10)  # '112', '100' 등 국가 코드
+
+    country_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="국가명 (예: 일본, 미국 등)"
+    )
+
+    ed_cd = models.CharField(
+        max_length=1,
+        default="D",  # 기본: 국민 해외관광객(출국)
+        help_text="D=국민 해외관광객(출국), E=방한 외래관광객(입국)"
+    )
+
+    departures = models.IntegerField(help_text="출국자 수 (num 필드)")
+
+    ratio = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="전년 동월 대비 증감률(%) (없으면 NULL)"
+    )
 
     class Meta:
-        unique_together = ("year", "month", "country")
+        unique_together = ("year", "month", "country", "ed_cd")
 
     def __str__(self):
-        return f"{self.year}-{self.month:02d} {self.country}: {self.departures}명"
+        name = self.country_name or self.country
+        return f"{self.year}-{self.month:02d} [{self.ed_cd}] {name}: {self.departures}명"
+
 
 class VoicePhishingStat(models.Model):
     """월별 보이스피싱 발생 건수"""
