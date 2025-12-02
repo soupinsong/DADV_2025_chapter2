@@ -37,25 +37,25 @@ def sync_cyber_scam():
 
     for row in rows:
         try:
-            year = int(row.get("연도"))
+            year = clean_int(row.get("연도"))
             category = row.get("구분", "")
-        except (TypeError, ValueError):
-            # 연도 이상하면 스킵
-            continue
+        except Exception:
+            continue  # 연도나 구분 이상하면 스킵
 
         CyberScamStat.objects.update_or_create(
             year=year,
             category=category,
             defaults={
-                "direct_trade": int(row.get("직거래") or 0),
-                "shopping_mall": int(row.get("쇼핑몰") or 0),
-                "game": int(row.get("게임") or 0),
-                "email_trade": int(row.get("이메일 무역") or 0),
-                "romance": int(row.get("연예빙자") or 0),
-                "investment": int(row.get("사이버투자") or 0),
-                "etc": int(row.get("사이버사기_기타") or 0),
+                "direct_trade":  clean_int(row.get("직거래")),
+                "shopping_mall": clean_int(row.get("쇼핑몰")),
+                "game":          clean_int(row.get("게임")),
+                "email_trade":   clean_int(row.get("이메일 무역")),
+                "romance":       clean_int(row.get("연예빙자")),
+                "investment":    clean_int(row.get("사이버투자")),
+                "etc":           clean_int(row.get("사이버사기_기타")),
             },
         )
+
 
 
 # =========================
@@ -241,3 +241,29 @@ def sync_travel_stats_from_csv():
         total_records += len(normalized)
 
     return {"status": "csv_sync_ok", "saved_records": total_records}
+
+def clean_int(value, default=0):
+    """
+    API에서 온 숫자 문자열을 안전하게 int로 변환.
+    - "12,345" / " 123 " / "12.0" / None / "" / "-" 다 처리
+    """
+    if value is None:
+        return default
+
+    if isinstance(value, (int, float)):
+        return int(value)
+
+    if isinstance(value, str):
+        s = value.strip()
+        if s == "" or s == "-":
+            return default
+        # 쉼표, 공백, 퍼센트 등 제거
+        s = s.replace(",", "").replace("%", "").replace(" ", "")
+    else:
+        s = str(value)
+
+    try:
+        return int(float(s))
+    except Exception:
+        return default
+
