@@ -2,78 +2,94 @@ import pandas as pd
 from django.conf import settings
 from .models import TravelStat
 
-def clean_number(x):
-    """문자열 숫자 처리 ('1,234' → 1234), 결측치는 0."""
+def clean_num(x):
     if pd.isna(x):
         return 0
-    if isinstance(x, str):
-        x = x.replace(",", "").strip()
-        if x == "" or x == "-":
-            return 0
+    x = str(x).replace(",", "").replace("%", "").strip()
+    if x == "" or x == "-":
+        return 0
     try:
         return int(float(x))
     except:
         return 0
 
 
-def load_csv(path, region_name):
-    """CSV 파일을 로드하고 통일된 스키마로 전처리."""
-    df = pd.read_csv(path)
+def load_csv_trip_table(path, region_name):
+    df = pd.read_csv(path, header=None, encoding="utf-8-sig")
 
-    # 컬럼명 표준화
-    df.columns = [c.strip().lower() for c in df.columns]
+    # 1행 = 국가명, 2행 = 명수/전년대비
+    header_country = df.iloc[1]   # 국가명 한글/영문 페어
+    header_type = df.iloc[2]      # 명수/전년대비
 
-    # 필수 컬럼 체크
-    required = ["year", "month"]
-    if not all(col in df.columns for col in required):
-        raise ValueError(f"{path} 파일에 year, month 컬럼이 없습니다.")
+    n_cols = df.shape[1]
 
-    # country 이름 있는 컬럼 찾기
-    country_cols = [c for c in df.columns if c not in ["year", "month"]]
+    # ★ 국가명 & 명수열만 추출하는 규칙 ★
+    country_cols = []  # (열번호, 국가명)
 
-    rows = []
+    for col in range(3, n_cols):
+        col_type = str(header_type[col]).strip()
+        col_country = str(header_country[col]).strip()
 
-    for country in country_cols:
-        sub = df[["year", "month", country]].copy()
-        sub["country"] = country
-        sub["departures"] = sub[country].apply(clean_number)
-        sub["region"] = region_name
-        sub["ed_cd"] = "D"  # 항상 출국자 수
-        sub = sub[["year", "month", "country", "region", "ed_cd", "departures"]]
-        rows.append(sub)
+        # 명수 열만 선택 (전년대비 제외)
+        if col_type != "명수":
+            continue
 
-    df_final = pd.concat(rows, ignore_index=True)
+        # 국가명은 한글/영문 페어 중 “한글쪽”만 이름으로 사용
+        # 예: 4열=일본 / 5열=Japan → 우리는 4열의 "일본" 사용
+        country_name = col_country
+        if country_name.lower() == "nan" or country_name == "":
+            continue
 
-    # 결측치 처리
-    df_final.fillna(0, inplace=True)
+        country_cols.append((col, country_name))
 
-    # 국가명 소문자 통일
-    df_final["country"] = df_final["country"].str.strip().str.lower()
+    print(f"[{region_name}] 감지된 국가 수: {len(country_cols)}")
+    print(f"[{region_name}] 국가 리스트 앞 10개:", country_cols[:10])
 
-    # 중복 제거
-    df_final.drop_duplicates(subset=["year", "month", "country", "region"], inplace=True)
+    output_rows = []
+    current_year = None
 
-    return df_final
+    # 실제 데이터는 3행부터 시작
+    for idx, row in df.iloc[3:].iterrows():
+        year_cell = str(row.iloc[0]).strip()
+        month_cell = str(row.iloc[1]).strip()
+
+        # 연도 행
+        if year_cell.endswith("년"):
+            digits = "".join([c for c in year_cell if c.isdigit()])
+            if digits:
+                current_year = int(digits)
+            continue
+
+        if current_year is None:
+            continue
+
+        # 월 행
+        if not month_cell.endswith("월"):
+            continue
+
+        month_digits = "".join([c for c in month_cell if c.isdigit()])
+        if not month_digits:
+            continue
+
+        month = int(month_digits)
+
+        # 국가별 명수 추출
+        for col, country_name in country_cols:
+            raw_val = row.iloc[col]
+            departures = clean_num(raw_val)
+
+            output_rows.append({
+                "year": current_year,
+                "month": month,
+                "country": country_name,
+                "region": region_name,
+                "departures": departures
+            })
+
+    return pd.DataFrame(output_rows)
 
 
-def save_to_db(df):
-    """전처리된 DF를 TravelStat DB에 저장."""
-    count = 0
-    for _, row in df.iterrows():
-        TravelStat.objects.update_or_create(
-            year=int(row["year"]),
-            month=int(row["month"]),
-            country=row["country"],
-            region=row["region"],
-            ed_cd=row["ed_cd"],
-            defaults={"departures": int(row["departures"])}
-        )
-        count += 1
-    return count
-
-
-def import_all_regions():
-    """ENV에 등록된 모든 CSV 파일을 자동으로 불러와 DB에 저장."""
+def load_all_departure_data():
     files = {
         "asia": settings.ASIA_CSV,
         "europe": settings.EUROPE_CSV,
@@ -82,16 +98,32 @@ def import_all_regions():
         "oceania": settings.OCEANIA_CSV,
     }
 
-    total_saved = 0
+    outputs = []
 
     for region, path in files.items():
-        if path is None:
-            continue
-        print(f"=== {region.upper()} CSV IMPORT START ===")
-        df = load_csv(path, region)
-        saved = save_to_db(df)
-        total_saved += saved
-        print(f"{region} 저장 완료: {saved} rows")
+        print(f"=== {region.upper()} CSV 로드 시작 ===")
+        try:
+            df = load_csv_trip_table(path, region)
+            print(df.head())
+            outputs.append(df)
+        except Exception as e:
+            print(f"⚠ {region} CSV 로드 실패 → {e}")
 
-    print(f"\n총 저장된 데이터: {total_saved} rows")
-    return total_saved
+    if not outputs:
+        print("❌ CSV 데이터 없음")
+        return pd.DataFrame()
+
+    return pd.concat(outputs, ignore_index=True)
+
+def save_to_db(df):
+    count = 0
+    for _, row in df.iterrows():
+        TravelStat.objects.update_or_create(
+            year=row["year"],
+            month=row["month"],
+            country=row["country"],
+            region=row["region"],
+            defaults={"departures": row["departures"]},
+        )
+        count += 1
+    return count

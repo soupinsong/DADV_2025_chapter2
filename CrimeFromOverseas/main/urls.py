@@ -22,4 +22,6 @@ urlpatterns = [
 
     path("test/voice/", views.test_voice),
 
+    path("debug/travel/", views.travel_debug_view, name="travel_debug"),
+
 ]

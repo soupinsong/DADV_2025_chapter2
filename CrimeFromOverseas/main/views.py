@@ -2,10 +2,17 @@ from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings 
 from .utils_csv_import import load_all_departure_data
+from .models import TravelStat
+from django.db.models import Count
 
 def test_departure_csv(request):
     df = load_all_departure_data()
-    return JsonResponse(df.head(20).to_dict(orient="records"), safe=False)
+
+    return JsonResponse({
+        "rows": len(df),
+        "columns": list(df.columns),
+        "sample": df.head(20).to_dict(orient="records")
+    }, safe=False)
 
 
 from .api_client import (
@@ -34,9 +41,17 @@ def test_keys(request):
         "VOICE_BASE_URL": settings.VOICE_BASE_URL,
     })
 
+from .utils_csv_import import load_all_departure_data, save_to_db
+
 def sync_travel_view(request):
-    result = sync_travel_stats_from_csv()
-    return JsonResponse(result)
+    df = load_all_departure_data()
+    saved = save_to_db(df)
+    return JsonResponse({
+        "status": "ok",
+        "saved_rows": saved,
+        "total_rows": len(df)
+    })
+
 
 # 사이버사기 API 동기화
 def sync_cyber_view(request):
@@ -53,3 +68,38 @@ def sync_voice_view(request):
 def test_cyber(request):
     data = fetch_cyber_scam()
     return JsonResponse(data, safe=False)
+
+
+def travel_debug_view(request):
+    stats_limit = 100
+
+    total = TravelStat.objects.count()
+
+    if total == 0:
+        return render(request, "main/travel_debug.html", {
+            "total_count": 0,
+            "regions": [],
+            "stats": [],
+            "stats_limit": stats_limit,
+            "empty": True,
+        })
+
+    stats = (
+        TravelStat.objects
+        .order_by("-year", "-month", "region", "country")[:stats_limit]
+    )
+
+    regions = (
+        TravelStat.objects
+        .values("region")
+        .annotate(count=Count("id"))
+        .order_by("region")
+    )
+
+    context = {
+        "total_count": TravelStat.objects.count(),
+        "regions": regions,
+        "stats": stats,
+        "stats_limit": stats_limit,
+    }
+    return render(request, "main/travel_debug.html", context)
