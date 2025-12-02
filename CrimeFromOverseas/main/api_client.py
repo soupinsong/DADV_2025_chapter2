@@ -138,90 +138,106 @@ def sync_voice_phishing():
 
 
 # =========================
-# 3. 출입국 관광 통계 (국민 해외관광객 위주)
+# 3. 출입국 통계 – CSV 파일 기반으로 변경
 # =========================
-import xmltodict  # 맨 위 import에 추가 필요
-
-def fetch_travel_stats(year_month, nat_cd, ed_cd="D"):
-    """
-    관광 출입국 통계 (EdrcntTourismStatsService)
-
-    YM     : '201201' 형태의 문자열 (YYYYMM)
-    NAT_CD : 국가 코드 (예: '112')
-    ED_CD  : 'D' = 국민 해외관광객(출국), 'E' = 방한외래관광객(입국)
-
-    이 함수는 XML 응답을 dict 형태로 파싱해서 반환한다.
-    """
-
-    # settings.py 에서 이렇게 읽고 있다고 가정:
-    # TRAVEL_BASE_URL=https://openapi.tour.go.kr/openapi/service
-    # TRAVEL_SERVICE=EdrcntTourismStatsService
-    # TRAVEL_ENDPOINT=getEdrcntTourismStatsList
-    url = f"{settings.TRAVEL_BASE_URL}/{settings.TRAVEL_SERVICE}/{settings.TRAVEL_ENDPOINT}"
-
-    params = {
-        "serviceKey": settings.API_KEY,
-        "YM": year_month,
-        "NAT_CD": nat_cd,
-        "ED_CD": ed_cd,
-    }
-
-    res = requests.get(url, params=params)
-    res.raise_for_status()
-
-    # 출입국 통계는 공식적으로 XML만 제공 → xmltodict로 파싱
-    data = xmltodict.parse(res.text)
-    return data
+import pandas as pd
 
 
-def sync_travel_stats(year, month, nat_cd="112", ed_cd="D"):
-    """
-    출국자(국민 해외관광객) 통계를 DB에 저장
-
-    year  : 2020
-    month : 1 ~ 12
-    nat_cd: 국가 코드 (112 등)
-    ed_cd : 기본 'D' (국민 해외관광객)
-    """
-
-    ym = f"{year}{month:02d}"
-    data = fetch_travel_stats(ym, nat_cd, ed_cd)
-
-    # XML → dict 구조 예시:
-    # data["response"]["body"]["items"]["item"]
-    try:
-        item = (
-            data
-            .get("response", {})
-            .get("body", {})
-            .get("items", {})
-            .get("item")
-        )
-    except AttributeError:
-        # 구조가 이상하면 그냥 종료
-        return
-
-    if item is None:
-        # 조회 결과가 없으면 종료
-        return
-
-    # item 이 리스트일 수도, dict일 수도 있어서 방어
-    if isinstance(item, list):
-        # NAT_CD 한 개만 조회했는데 리스트면, 우선 첫 번째만 사용
-        item = item[0]
-
-    # 필드 이름은 실제 응답 확인해서 한 번 맞춰봐야 함
-    # 보통 num / natCd / ym / edCd 이런 식으로 옴
-    departures_raw = item.get("num") or item.get("NUM")  # 혹시 대소문자 다를 경우 대비
+def load_csv(path, region_name):
+    """CSV 파일을 로드하고 기본 전처리를 수행."""
+    if path is None:
+        print(f"[WARN] {region_name} CSV 경로가 없습니다.")
+        return None
 
     try:
-        departures = int(departures_raw)
-    except (TypeError, ValueError):
-        departures = 0
+        df = pd.read_csv(path)
+        df["region"] = region_name   # 지역(Asia/Europe 등) 태그 추가
+        return df
+    except Exception as e:
+        print(f"[ERROR] {region_name} CSV 로딩 실패:", e)
+        return None
 
-    TravelStat.objects.update_or_create(
-        year=year,
-        month=month,
-        country=nat_cd,
-        defaults={"departures": departures},
-    )
+
+def normalize_travel_dataframe(df):
+    """
+    수빈이가 만든 CSV 구조를 TravelStat 모델 형태로 통일하는 함수.
+    CSV 형식 특징:
+    - 첫 번째 컬럼: 연도 (예: 2018년, 2019년)
+    - 두 번째 컬럼부터: 국가명 (열 제목)
+    - 각 셀 값: 월별 출국자 수
+    """
+
+    records = []
+
+    # 첫 번째 컬럼이 '연도' 또는 유사한 패턴이라고 가정
+    year_col = df.columns[0]
+
+    for _, row in df.iterrows():
+        year_str = str(row[year_col])
+        year = int(year_str.replace("년", "").strip())
+
+        # 월 정보는 CSV에 포함됐으므로 따로 컬럼들을 월 단위로 읽기
+        for col in df.columns[1:]:
+            value = row[col]
+
+            # 결측치나 NaN → 무시
+            if pd.isna(value):
+                continue
+
+            # 국가명
+            country_name = col.strip()
+
+            # 값이 "123,456" 같은 형식이면 쉼표 제거
+            try:
+                departures = int(str(value).replace(",", ""))
+            except:
+                continue
+
+            # TravelStat 모델 형식에 맞게 저장용 객체 만들기
+            records.append({
+                "year": year,
+                "month": 0,  # 월 단위가 CSV에 없으면 0 또는 1로 통일
+                "country": country_name,
+                "country_name": country_name,
+                "ed_cd": "D",
+                "departures": departures,
+            })
+
+    return records
+
+
+def sync_travel_stats_from_csv():
+    """CSV 파일(아시아·유럽·아메리카·아프리카·오세아니아)을 모두 읽어 TravelStat DB에 저장"""
+
+    csv_files = [
+        (settings.ASIA_CSV, "Asia"),
+        (settings.EUROPE_CSV, "Europe"),
+        (settings.AFRICA_CSV, "Africa"),
+        (settings.AMERICA_CSV, "America"),
+        (settings.OCEANIA_CSV, "Oceania"),
+    ]
+
+    total_records = 0
+
+    for path, region in csv_files:
+        df = load_csv(path, region)
+        if df is None:
+            continue
+
+        normalized = normalize_travel_dataframe(df)
+
+        for rec in normalized:
+            TravelStat.objects.update_or_create(
+                year=rec["year"],
+                month=rec["month"],       # 월 정보가 CSV에 없으므로 0 또는 1 고정
+                country=rec["country"],
+                ed_cd="D",
+                defaults={
+                    "country_name": rec["country_name"],
+                    "departures": rec["departures"],
+                }
+            )
+
+        total_records += len(normalized)
+
+    return {"status": "csv_sync_ok", "saved_records": total_records}

@@ -29,9 +29,17 @@ SCAM_ENDPOINT = os.getenv("SCAM_ENDPOINT")
 VOICE_BASE_URL = os.getenv("VOICE_BASE_URL")
 VOICE_ENDPOINT = os.getenv("VOICE_ENDPOINT")
 
-TRAVEL_BASE_URL = os.getenv("TRAVEL_BASE_URL")
-TRAVEL_SERVICE = os.getenv("TRAVEL_SERVICE")
-TRAVEL_ENDPOINT = os.getenv("TRAVEL_ENDPOINT")
+def csv_path(name):
+    value = os.getenv(name)
+    if value:
+        return BASE_DIR / value
+    return None
+
+ASIA_CSV = csv_path("ASIA_CSV")
+EUROPE_CSV = csv_path("EUROPE_CSV")
+AFRICA_CSV = csv_path("AFRICA_CSV")
+AMERICA_CSV = csv_path("AMERICA_CSV")
+OCEANIA_CSV = csv_path("OCEANIA_CSV")
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
