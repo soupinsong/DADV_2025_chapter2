@@ -2,31 +2,28 @@ from django.db import models
 
 class TravelStat(models.Model):
     """
-    CSV 기반 국민 해외관광객 통계 저장 모델
-    - region  : 대륙명 (Asia, Europe, Africa, America, Oceania)
-    - country : 국가명 (Japan, China, USA 등)
-    - year    : 연도
-    - month   : 월
-    - departures : 출국자 수
-    - ratio      : 전년 동월 대비 증감률(%), 없으면 NULL
+    해외 출국 통계 (월별 OR 연도별)
+    - month가 NULL이면 연도별 합계 데이터
+    - month가 숫자(1~12)면 월별 데이터
     """
-
-    region = models.CharField(max_length=50)     # Asia, Europe, America 등
-    country = models.CharField(max_length=100)   # Japan, China, USA...
+    region = models.CharField(max_length=50)
+    country = models.CharField(max_length=100)
 
     year = models.IntegerField()
-    month = models.IntegerField()
+    month = models.IntegerField(null=True, blank=True)   # ⭐ 연도별 합계는 None
 
     departures = models.IntegerField(help_text="출국자 수")
-    ratio = models.FloatField(blank=True, null=True, help_text="전년 대비 증감률(%)")
+    ratio = models.FloatField(blank=True, null=True)
 
     class Meta:
-        unique_together = ("region", "country", "year", "month")
+        # 이제 month를 unique에서 제거!
+        unique_together = ("region", "country", "year")
         ordering = ["year", "month", "region", "country"]
 
     def __str__(self):
-        return f"{self.year}-{self.month:02d} {self.region}/{self.country}: {self.departures}명"
-
+        if self.month:
+            return f"{self.year}-{self.month:02d} {self.region}/{self.country}: {self.departures}명"
+        return f"{self.year} 연도합계 {self.region}/{self.country}: {self.departures}명"
 
 
 class VoicePhishingStat(models.Model):

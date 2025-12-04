@@ -6,7 +6,8 @@ from .models import TravelStat
 from django.db.models import Count
 
 def test_departure_csv(request):
-    df = load_all_departure_data()
+    df, year_totals, crime_totals, total_all_years = load_all_departure_data()
+
 
     return JsonResponse({
         "rows": len(df),
@@ -44,12 +45,16 @@ def test_keys(request):
 from .utils_csv_import import load_all_departure_data, save_to_db
 
 def sync_travel_view(request):
-    df = load_all_departure_data()
+    df, year_totals, crime_totals, total_all_years = load_all_departure_data()
     saved = save_to_db(df)
+
     return JsonResponse({
         "status": "ok",
         "saved_rows": saved,
-        "total_rows": len(df)
+        "total_rows": len(df),
+        "year_totals": year_totals.to_dict(),          # 연도별 출국자 합계
+        "crime_totals": crime_totals.to_dict(),        # 범죄국 연도별 합계
+        "total_all_years": int(total_all_years),       # 전체 합계
     })
 
 
