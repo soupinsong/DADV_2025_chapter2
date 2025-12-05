@@ -96,12 +96,83 @@ CRIME_COUNTRIES = [
     "캄보디아", "이스라엘", "몰디브", "미얀마", "필리핀"
 ]
 
+def compute_yearly_totals(df):
+    """
+    df: load_all_departure_data()로 만들어진 월 단위 long-form 데이터
+        columns: [year, month, country, region, departures]
+
+    반환:
+      1) 전체 국가 연도별 합계
+      2) 주요 범죄국 연도별 합계
+      3) 특정 국가 연도별 합계를 뽑아낼 수 있는 dict
+      4) 2018~2024 전체 합계
+    """
+
+    # ------------------------------
+    # ① 전체 국가 연도별 합계
+    # ------------------------------
+    total_by_year = (
+        df.groupby("year")["departures"]
+        .sum()
+        .reset_index()
+        .rename(columns={"departures": "year_total"})
+    )
+
+    # ------------------------------
+    # ② 주요 범죄국 연도별 합계
+    # ------------------------------
+    crime_df = df[df["country"].isin(CRIME_COUNTRIES)]
+
+    crime_total_by_year = (
+        crime_df.groupby("year")["departures"]
+        .sum()
+        .reset_index()
+        .rename(columns={"departures": "crime_country_total"})
+    )
+
+    crime_ratio_by_year = crime_total_by_year.merge(total_by_year, on="year")
+    crime_ratio_by_year["crime_ratio_percent"] = (
+        crime_ratio_by_year["crime_country_total"] /
+        crime_ratio_by_year["year_total"] * 100
+    ).round(3)   # 소수점 3자리까지
+
+    # ------------------------------
+    # ③ 국가별 연도별 합계 출력용 dict
+    # ------------------------------
+    country_group = (
+        df.groupby(["country", "year"])["departures"]
+        .sum()
+        .reset_index()
+    )
+
+    # 예: 국가별 전체 데이터는 이렇게 접근 가능
+    # country_group[country_group["country"] == "중국"]
+
+    # ------------------------------
+    # ④ 2018~2024 누적 전체 출국자 수
+    # ------------------------------
+    filtered = total_by_year[
+        (total_by_year["year"] >= 2018) &
+        (total_by_year["year"] <= 2024)
+    ]
+
+    total_2018_2024 = int(filtered["year_total"].sum())
+
+    # ------------------------------
+    # 반환
+    # ------------------------------
+    return {
+        "total_by_year": total_by_year,                   # 모든 국가 연도별 합계
+        "crime_total_by_year": crime_total_by_year, 
+        "crime_ratio_by_year": crime_ratio_by_year,       # 주요 범죄국 연도별 합계
+        "country_yearly": country_group,                  # 국가별 연도별 합계 DF
+        "total_2018_2024": total_2018_2024               # 2018~2024 총합
+    }
 
 # -----------------------------
 # ✔ CSV 전체 로드 & 연도별/범죄국 집계
 # -----------------------------
 def load_all_departure_data():
-
     files = {
         "asia": settings.ASIA_CSV,
         "europe": settings.EUROPE_CSV,
@@ -110,49 +181,26 @@ def load_all_departure_data():
         "oceania": settings.OCEANIA_CSV,
     }
 
-    dfs = []
+    outputs = []
 
     for region, path in files.items():
-        print(f"\n=== {region.upper()} CSV 로드 시작 ===")
-        df_yearly = load_and_aggregate_csv(path, region)
-        dfs.append(df_yearly)
+        print(f"=== {region.upper()} CSV 로드 시작 ===")
+        try:
+            df = load_and_aggregate_csv(path, region)
 
-    final_df = pd.concat(dfs, ignore_index=True)
+            outputs.append(df)
+        except Exception as e:
+            print(f"⚠ {region} CSV 로드 실패 → {e}")
 
-    # -----------------------------
-    # ✔ 연도별 총합 계산
-    # -----------------------------
-    total_by_year = (
-        final_df.groupby("year")["departures"]
-        .sum()
-        .reset_index()
-        .rename(columns={"departures": "year_total"})
-    )
+    if not outputs:
+        return None
 
-    # -----------------------------
-    # ✔ 주요 범죄국 연도별 합계
-    # -----------------------------
-    crime_df = (
-        final_df[final_df["country"].isin(CRIME_COUNTRIES)]
-        .groupby("year")["departures"]
-        .sum()
-        .reset_index()
-        .rename(columns={"departures": "crime_country_total"})
-    )
+    df = pd.concat(outputs, ignore_index=True)
 
-    print("\n📌 주요 범죄국 연도별 출국자 합계")
-    print(crime_df)
+    # 🔥 새 분석 기능 추가
+    report = compute_yearly_totals(df)
 
-    print("\n📌 전체 국가 연도별 출국자 합계")
-    print(total_by_year)
-
-    # === 전체 연도(2018~2024) 출국자 총합 ===
-    total_all_years = total_by_year["year_total"].sum()
-
-    print("\n📌 2018~2024 전체 출국자 총합 (누적)")
-    print(f"{total_all_years:,}")
-
-    return final_df, total_by_year, crime_df, total_all_years
+    return df, report["total_by_year"], report["crime_total_by_year"], report["crime_ratio_by_year"], report["total_2018_2024"]
 
 
 # -----------------------------
@@ -165,8 +213,11 @@ def save_yearly_to_db(df):
             year=row["year"],
             month=0,
             country=row["country"],
-            ed_cd="D",
-            defaults={"country_name": row["country"], "departures": row["departures"]}
+            region=row["region"],     # 🔥 region은 모델에 있으므로 추가
+            defaults={
+                "departures": row["departures"],
+                "ratio": None,
+            }
         )
         count += 1
 

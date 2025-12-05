@@ -135,6 +135,26 @@ def sync_voice_phishing():
             month=month,
             defaults={"cases": cases},
         )
+    
+    yearly = get_voice_phishing_yearly()
+    return yearly
+
+def get_voice_phishing_yearly():
+    qs = VoicePhishingStat.objects.all().values("year", "month", "cases")
+    if not qs:
+        return None
+
+    df = pd.DataFrame(qs)
+
+    yearly = (
+        df.groupby("year")["cases"]
+        .sum()
+        .reset_index()
+        .rename(columns={"cases": "voice_year_total"})
+    )
+
+    return yearly
+
 
 
 # =========================

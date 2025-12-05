@@ -24,4 +24,8 @@ urlpatterns = [
 
     path("debug/travel/", views.travel_debug_view, name="travel_debug"),
 
+    path("sync/voiceall/", views.sync_voice_yearly_view, name="sync_voiceall"),
+
+    path("analysis/data/", views.get_analysis_data, name="analysis_data"),
+
 ]
